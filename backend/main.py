@@ -53,11 +53,12 @@ app = FastAPI(
 
 # --- CORS Configuration ---
 origins = [
-    "http://localhost:3000",
-    "http://localhost:8000",
-    # Add your Vercel deployment URL here when you have it, e.g.:
-    "https://booking-six-ecru.vercel.app/",
-    "https://booking-backend-o38g.onrender.com/",
+    "http://localhost:3000",           # Your Next.js development server
+    "http://localhost:8000",           # If your FastAPI backend serves its own frontend/docs on the same port
+    "https://booking-six-ecru.vercel.app",  # Your Vercel frontend deployment (without trailing slash for robustness)
+    "https://booking-six-ecru.vercel.app/", # Your Vercel frontend deployment (with trailing slash)
+    "https://booking-backend-o38g.onrender.com", # Your Render backend deployment (without trailing slash for robustness)
+    "https://booking-backend-o38g.onrender.com/", # Your Render backend deployment (with trailing slash)
 ]
 
 app.add_middleware(
