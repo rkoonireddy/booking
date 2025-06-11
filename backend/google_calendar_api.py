@@ -29,7 +29,8 @@ SCOPES = [
 ]
 REDIRECT_URI = os.getenv("REDIRECT_URI", "http://localhost:8000/auth/google/callback") # Use env var, with fallback
 PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID", "your-default-project-id") # Fallback for project_id
-TOKEN_FILE = "./etc/secrets/token.json"
+TOKEN_FILE = "token.json"
+# ./etc/secrets/
 
 
 def get_flow():
