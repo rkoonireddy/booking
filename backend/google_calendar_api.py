@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta, timezone
 import json
 
-from google.auth.transport.requests import Request  # Note: Renamed to GoogleAuthRequest in main.py
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -18,6 +18,7 @@ load_dotenv()
 # --- Configuration ---
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID")  # Default to primary calendar if not set
 
 if not CLIENT_ID or not CLIENT_SECRET:
     raise ValueError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables must be set.")
@@ -26,8 +27,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.freebusy"
 ]
-REDIRECT_URI = "http://localhost:8000/auth/google/callback"
-TOKEN_FILE = "token.json"
+REDIRECT_URI = os.getenv("REDIRECT_REDIRECT_URI", "http://localhost:8000/auth/google/callback") # Use env var, with fallback
+PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID", "your-default-project-id") # Fallback for project_id
+TOKEN_FILE = "./etc/secrets/token.json"
 
 
 def get_flow():
@@ -35,7 +37,7 @@ def get_flow():
     client_config = {
         "web": {
             "client_id": CLIENT_ID,
-            "project_id": "your-project-id",
+            "project_id": PROJECT_ID,
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
@@ -44,41 +46,149 @@ def get_flow():
             "javascript_origins": ["http://localhost:3000"]
         }
     }
-    temp_client_secret_path = "temp_client_secret_flow.json"
-    with open(temp_client_secret_path, "w") as f:
-        json.dump(client_config, f)
-
-    try:
-        flow = Flow.from_client_secrets_file(
-            temp_client_secret_path,
-            scopes=SCOPES,
-            redirect_uri=REDIRECT_URI
-        )
-    finally:
-        if os.path.exists(temp_client_secret_path):
-            os.remove(temp_client_secret_path)
-
+    # Removed temporary file creation for client_config
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=SCOPES,
+        redirect_uri=REDIRECT_URI
+    )
     return flow
 
 
-def save_credentials(creds):
-    """Saves the credentials to a file."""
+def save_credentials(creds: Credentials):
+    """
+    Saves the credentials to token.json, preserving existing fields
+    and only updating the fields present in the new credentials object.
+    """
+    # Convert new credentials to a dictionary representation
+    new_creds_data = json.loads(creds.to_json())
+
+    existing_data = {}
+    if os.path.exists(TOKEN_FILE):
+        try:
+            with open(TOKEN_FILE, "r") as f:
+                existing_data = json.load(f)
+            print(f"DEBUG: Existing token.json data loaded: {existing_data.keys()}")
+        except json.JSONDecodeError:
+            print(f"WARNING: Could not decode existing {TOKEN_FILE}. Creating new one.")
+            existing_data = {}
+        except Exception as e:
+            print(f"ERROR: Failed to read {TOKEN_FILE}: {e}. Creating new one.")
+            existing_data = {}
+
+    # Update existing data with new credentials data
+    # This will overwrite fields that are present in new_creds_data
+    # and keep fields that are only in existing_data.
+    merged_data = {**existing_data, **new_creds_data}
+    
+    # Special handling for 'scopes' if it's a list, to potentially merge or replace
+    # For 'scopes', typically the flow ensures the correct set. We'll just take the new one.
+    if 'scopes' in new_creds_data:
+        merged_data['scopes'] = new_creds_data['scopes']
+    
+    # Write the merged dictionary back to the file
     with open(TOKEN_FILE, "w") as token:
-        token.write(creds.to_json())
-    print("Credentials saved to token.json")
+        json.dump(merged_data, token, indent=4) # Use indent for readability
+    print("Credentials saved/updated in token.json.")
 
 
 def get_credentials():
-    """Loads credentials from a file, or returns None if not found."""
+    """
+    Loads credentials from token.json, or returns None if not found.
+    Handles token refresh if the loaded token is expired.
+    Ensures all datetime comparisons are consistently timezone-aware.
+    """
+    creds = None
     if os.path.exists(TOKEN_FILE):
-        return Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-    return None
+        print(f"DEBUG: Loading credentials from {TOKEN_FILE}.")
+        try:
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+            
+            # --- START Critical Timezone Handling ---
+            if creds.expiry and creds.expiry.tzinfo is None:
+                creds.expiry = creds.expiry.replace(tzinfo=timezone.utc)
+                print("DEBUG: Corrected naive creds.expiry to timezone-aware (UTC).")
+            # --- END Critical Timezone Handling ---
+            
+            print(f"DEBUG: creds.expiry BEFORE comparison: {creds.expiry} (Type: {type(creds.expiry)}, Tzinfo: {creds.expiry.tzinfo})")
 
+            current_utc_time = datetime.now(timezone.utc)
+            is_expired = creds.expiry < current_utc_time if creds.expiry else True # Default to expired if expiry is None
+
+            print(f"DEBUG: Current UTC time for comparison: {current_utc_time} (Type: {type(current_utc_time)}, Tzinfo: {current_utc_time.tzinfo})")
+            print(f"DEBUG: Custom `is_expired` check result: {is_expired}")
+
+            # Check if token is expired and refresh if a refresh_token is available
+            if is_expired and creds.refresh_token:
+                print(f"DEBUG: Credentials from {TOKEN_FILE} expired, attempting refresh...")
+                print(f"DEBUG: Refresh token present for refresh attempt: {creds.refresh_token is not None}")
+                try:
+                    creds.refresh(Request()) 
+                    save_credentials(creds)
+                    print(f"DEBUG: Credentials from {TOKEN_FILE} refreshed and updated. New expiry: {creds.expiry}. New access token length: {len(creds.token) if creds.token else 'N/A'}")
+                    
+                    # --- REPLACED creds.valid CHECK HERE ---
+                    if not is_expired and creds.token: # Check if not expired AND access token exists
+                        print("DEBUG: Credentials now valid after refresh (custom check).")
+                        return creds
+                    else:
+                        print("WARNING: Credentials not valid after refresh attempt (custom check). This indicates an issue with the refreshed token itself or no access token.")
+                        print(f"DEBUG: Refreshed token: {creds.token[:30]}...") 
+                        print(f"DEBUG: Refreshed expiry: {creds.expiry}")
+                        creds = None
+                except Exception as e:
+                    print(f"CRITICAL ERROR: Failed to refresh credentials from {TOKEN_FILE}: {type(e).__name__}: {e}")
+                    creds = None
+            elif creds.refresh_token:
+                print("DEBUG: Credentials not expired, but refresh token is present.")
+            else: # This branch means creds.expired is True, but no refresh_token
+                print("DEBUG: Credentials expired, but no refresh token available for silent refresh.")
+
+            # --- REPLACED FINAL creds.valid CHECK HERE ---
+            if creds and not is_expired and creds.token: # Ensure it's not None, not expired, and has a token
+                print("DEBUG: Credentials loaded and valid (after potential refresh, custom check).")
+                return creds
+            elif creds:
+                print("DEBUG: Credentials loaded but not valid after refresh attempt (custom check).")
+                return None
+        except Exception as e:
+            print(f"ERROR: Failed to load credentials from {TOKEN_FILE}: {type(e).__name__}: {e}. You may need to re-authorize.")
+            return None
+    
+    print("DEBUG: No existing token.json or valid credentials found.")
+    return None
 
 def build_calendar_service(creds):
     """Builds and returns a Google Calendar API service object."""
+    if not creds:
+        print("Cannot build calendar service: No valid credentials provided.")
+        return None
     try:
-        return build("calendar", "v3", credentials=creds)
+        service = build("calendar", "v3", credentials=creds)
+        
+        # --- MODIFIED CONNECTIVITY TEST ---
+        try:
+            # Test with a call that uses the desired SCOPES: calendar.events or calendar.freebusy
+            # A simple events.list() call for the primary calendar within a small time window
+            # is a good way to test read access to events.
+            now = datetime.utcnow() # Use UTC for Google API if you don't convert from naive
+            service.events().list(
+                calendarId=CALENDAR_ID,
+                timeMin=now.isoformat() + 'Z', # Use 'Z' for UTC if datetime is naive
+                maxResults=1, # Just need to check if it works, no need for many results
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+            print("DEBUG: Successfully verified Google Calendar API connectivity (events.list test).")
+        except HttpError as err:
+            # If the error is still 403 here, then your SCOPES are genuinely too limited
+            # for even this operation, or the user didn't grant all requested scopes.
+            print(f"WARNING: Google Calendar API connectivity test failed: {err}")
+            # Consider if the application can proceed without this specific access.
+            # If crucial functionalities rely on it, you might want to raise an exception or return None.
+            # For now, we'll return the service even with this warning.
+        
+        return service
     except Exception as e:
         print(f"Error building calendar service: {e}")
         return None
@@ -90,6 +200,9 @@ async def get_free_busy_slots(service, start_time: datetime, end_time: datetime,
     Returns a list of free 1-hour slots.
     """
     try:
+        # Note: timezone conversion is removed here as requested.
+        # Ensure that start_time and end_time passed to this function
+        # are already in a consistent timezone, preferably UTC, to avoid issues.
         body = {
             "timeMin": start_time.isoformat(),
             "timeMax": end_time.isoformat(),
@@ -103,8 +216,14 @@ async def get_free_busy_slots(service, start_time: datetime, end_time: datetime,
         while current_time < end_time:
             is_busy = False
             for period in busy_periods:
-                busy_start = datetime.fromisoformat(period['start']).astimezone(timezone.utc)
-                busy_end = datetime.fromisoformat(period['end']).astimezone(timezone.utc)
+                # `datetime.fromisoformat` will create timezone-aware datetimes if the
+                # ISO string (e.g., "2025-06-11T14:00:00Z") contains timezone info.
+                # If it doesn't, it will be naive. Mixed comparisons can cause TypeError.
+                busy_start = datetime.fromisoformat(period['start'])
+                busy_end = datetime.fromisoformat(period['end'])
+                
+                # Critical point: If current_time is naive and busy_start/end are aware (from 'Z'),
+                # or vice-versa, this comparison will raise TypeError.
                 if busy_start <= current_time < busy_end:
                     is_busy = True
                     break
@@ -116,7 +235,6 @@ async def get_free_busy_slots(service, start_time: datetime, end_time: datetime,
                 })
 
             current_time += timedelta(hours=1)
-        # print(free_slots)
         return free_slots
 
     except HttpError as error:
@@ -139,7 +257,7 @@ async def create_calendar_event(service, start_time: datetime, end_time: datetim
         'description': description,
         'start': {
             'dateTime': start_time.isoformat(),
-            'timeZone': 'UTC',
+            'timeZone': 'UTC', # This string tells Google how to interpret the naive datetime.
         },
         'end': {
             'dateTime': end_time.isoformat(),
@@ -178,4 +296,3 @@ async def create_calendar_event(service, start_time: datetime, end_time: datetim
     except Exception as e:
         print(f"An unexpected error occurred in create_calendar_event: {e}")
         raise
-

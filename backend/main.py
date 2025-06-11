@@ -56,8 +56,8 @@ origins = [
     "http://localhost:3000",
     "http://localhost:8000",
     # Add your Vercel deployment URL here when you have it, e.g.:
-    # "https://your-frontend-app-name.vercel.app",
-    # "https://*.vercel.app"  # Wildcard for all Vercel subdomains (use with caution)
+    "https://booking-six-ecru.vercel.app/",
+    "https://booking-backend-o38g.onrender.com/",
 ]
 
 app.add_middleware(
@@ -96,26 +96,37 @@ class BookingRequest(BaseModel):
 async def startup_event():
     db = SessionLocal()
     try:
-        # Initial slot population logic is removed as per your request.
-        # The database will now only store *booked* slots, not all potential slots.
-
         # Check for Google Calendar credentials
         creds = google_calendar_api.get_credentials()
-        if not creds or not creds.valid:
-            print(
-                "Google Calendar credentials not found or invalid. Please authorize the app:"
-            )
+
+        # --- Start Custom Validity and Expiry Check ---
+        # This replaces the problematic `creds.valid` and `creds.expired` properties.
+        # We assume get_credentials has already ensured creds.expiry is timezone-aware if it exists.
+        
+        is_creds_valid_custom = False
+        if creds and creds.token: # Ensure creds object and an access token string exist
+            if creds.expiry is None: # If expiry is unexpectedly None, it's not valid
+                is_creds_valid_custom = False
+            else:
+                current_utc_time = datetime.now(timezone.utc)
+                if creds.expiry > current_utc_time: # Check if expiry is in the future
+                    is_creds_valid_custom = True
+                # else: is_creds_valid_custom remains False (expired)
+        
+        # Now, use our custom flag for conditional logic
+        if not is_creds_valid_custom:
+            print("Google Calendar credentials not found or invalid. Please authorize the app:")
             flow = google_calendar_api.get_flow()
             authorization_url, _ = flow.authorization_url(
                 access_type="offline", include_granted_scopes="true"
             )
             print(f"Visit: {authorization_url}")
-        elif creds and creds.expired and creds.refresh_token:
-            print("Google Calendar access token expired, refreshing...")
-            creds.refresh(GoogleAuthRequest())
-            google_calendar_api.save_credentials(creds)
-            print("Google Calendar access token refreshed.")
-        else:
+        
+        # We don't need a separate `elif creds and creds.expired and creds.refresh_token:`
+        # because `get_credentials()` already handles the refresh if it was triggered
+        # by an actual expiration. If `get_credentials()` returned a valid token
+        # (meaning `is_creds_valid_custom` is True), then it's already refreshed if needed.
+        else: # This means is_creds_valid_custom is True
             print("Google Calendar credentials loaded and valid.")
     finally:
         db.close()
