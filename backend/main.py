@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import RedirectResponse
 from googleapiclient.errors import HttpError
+import shutil
+from google_calendar_api import ACT_TOKEN_FILE, TOKEN_FILE
+import os
 
 # Import database utilities and models
 from database import SessionLocal, engine, get_db
@@ -95,6 +98,17 @@ class BookingRequest(BaseModel):
 # It will now only check for Google Calendar credentials.
 @app.on_event("startup")
 async def startup_event():
+
+    try:
+        if os.path.exists(ACT_TOKEN_FILE):
+            os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
+            shutil.copy2(ACT_TOKEN_FILE, TOKEN_FILE)
+            print(f"Copied Google token from {ACT_TOKEN_FILE} to {TOKEN_FILE}")
+        else:
+            print(f"WARNING: Secret token file {ACT_TOKEN_FILE} does not exist.")
+    except Exception as e:
+        print(f"ERROR copying Google token: {e}")
+
     db = SessionLocal()
     try:
         # Check for Google Calendar credentials
@@ -107,12 +121,7 @@ async def startup_event():
                 access_type="offline", include_granted_scopes="true"
             )
             print(f"Visit: {authorization_url}")
-        
-        # We don't need a separate `elif creds and creds.expired and creds.refresh_token:`
-        # because `get_credentials()` already handles the refresh if it was triggered
-        # by an actual expiration. If `get_credentials()` returned a valid token
-        # (meaning `is_creds_valid_custom` is True), then it's already refreshed if needed.
-        else: # This means is_creds_valid_custom is True
+        else:
             print("Google Calendar credentials loaded and valid.")
     finally:
         db.close()
