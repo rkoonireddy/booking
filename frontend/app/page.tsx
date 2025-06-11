@@ -1,15 +1,16 @@
 'use client'; // This directive is essential for a client component
 
 import { useState, useMemo, useEffect } from 'react';
-import { format, isSameDay } from 'date-fns'; // Keep format for general date handling if needed, but use date-fns-tz for zoned formatting
-import { toZonedTime, formatInTimeZone } from 'date-fns-tz'; // Correct imports for timezone handling
+import { format, isSameDay } from 'date-fns';
+import { toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { toast } from 'sonner';
+import { motion } from 'framer-motion'; // Import Framer Motion
 
 import { getSlots, bookSlot, Slot, BookingRequest } from '@/lib/api';
 
 // Shadcn UI Components
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'; //CardFooter,
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -23,7 +24,6 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Toaster } from 'sonner';
 import { Calendar } from '@/components/ui/calendar';
-// import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select,
@@ -31,11 +31,9 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'; // Import Select components
+} from '@/components/ui/select';
+import Image from 'next/image'; // Import Next.js Image component
 
-// A more comprehensive list of common timezones, or you could fetch this dynamically
-// For simplicity, we'll use a hardcoded list for now.
-// In a real application, you might use a library like `tz-lookup` or a curated list.
 const commonTimezones = [
   'America/New_York',
   'America/Chicago',
@@ -44,12 +42,12 @@ const commonTimezones = [
   'Europe/London',
   'Europe/Paris',
   'Europe/Berlin',
-  'Europe/Zurich', // Added for Switzerland context
+  'Europe/Zurich',
   'Asia/Tokyo',
   'Asia/Shanghai',
   'Asia/Kolkata',
   'Australia/Sydney',
-  'UTC', // Keep UTC as an option
+  'UTC',
 ];
 
 // Main client-side page component
@@ -57,43 +55,32 @@ export default function Home() {
   const [currentSlots, setCurrentSlots] = useState<Slot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // selectedDate will represent a date in the *selected timezone* for calendar display/filtering
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
-
   const [isBookingDialogOpen, setIsBookingDialogOpen] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
-
   const [bookedByName, setBookedByName] = useState('');
   const [bookedByEmail, setBookedByEmail] = useState('');
   const [description, setDescription] = useState('');
   const [isBookingLoading, setIsBookingLoading] = useState(false);
-
-  // State to hold the currently selected timezone by the user
   const [userTimezone, setUserTimezone] = useState<string>('');
 
-  // --- Initial Data Fetch and Timezone Detection (Client-side) ---
   useEffect(() => {
-    // 1. Detect user's local system timezone and set it as default
     const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    // Check if the detected timezone is in our common list, otherwise default to a reasonable one or add it.
-    // For now, we'll just set it. If it's not in the dropdown, the user won't be able to select it again from the list.
     setUserTimezone(detectedTimezone);
-    console.log("Detected local timezone:", detectedTimezone);
+    // console.log("Detected local timezone:", detectedTimezone);
 
-    // 2. Fetch initial slots from the backend (they are always in UTC)
     async function fetchInitialSlots() {
       try {
         setLoading(true);
         const fetchedSlots = await getSlots();
-        console.log("--- Initial Slots from Backend (getSlots response, UTC) ---");
-        console.log(fetchedSlots);
-        console.log("-----------------------------------------------------");
+        // console.log("--- Initial Slots from Backend (getSlots response, UTC) ---");
+        // console.log(fetchedSlots);
+        // console.log("-----------------------------------------------------");
         setCurrentSlots(fetchedSlots);
         setError(null);
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred while fetching slots.';
-        console.error("Failed to fetch slots:", err);
+        // console.error("Failed to fetch slots:", err);
         setError(errorMessage);
         toast.error(`Failed to load slots: ${errorMessage}`);
       } finally {
@@ -101,61 +88,59 @@ export default function Home() {
       }
     }
     fetchInitialSlots();
-  }, []); // Empty dependency array means this runs once on mount
+  }, []);
 
-  // Calculate dates that have at least one available slot, converting UTC to the selected userTimezone
   const datesWithAvailableSlots = useMemo(() => {
     const dates = new Set<string>();
-    if (!userTimezone) return []; // Don't calculate until timezone is set
+    if (!userTimezone) return [];
 
     currentSlots.forEach(slot => {
       if (!slot.is_booked) {
-        // Convert the UTC slot datetime to the selected userTimezone's local time
         const zonedDate = toZonedTime(new Date(slot.datetime_utc), userTimezone);
-        // Format to 'yyyy-MM-dd' to get the date part in the selected timezone
         dates.add(format(zonedDate, 'yyyy-MM-dd'));
       }
     });
-    console.log(`Dates with Available Slots (in ${userTimezone}):`, Array.from(dates));
+    // console.log(`Dates with Available Slots (in ${userTimezone}):`, Array.from(dates));
     return Array.from(dates);
-  }, [currentSlots, userTimezone]); // Recalculate if slots or timezone change
+  }, [currentSlots, userTimezone]);
 
-  // Filter slots based on the selected date (which implicitly represents a date in the current userTimezone)
-  // and convert the slot times to the selected userTimezone for display and sorting
   const filteredSlots = useMemo(() => {
     if (!selectedDate || !userTimezone) {
       return [];
     }
 
     const filtered = currentSlots.filter(slot => {
-      // Convert the UTC slot datetime to the selected userTimezone's local time
       const zonedSlotDateTime = toZonedTime(new Date(slot.datetime_utc), userTimezone);
-      // Compare only the date part with the selectedDate (which is already considered in the user's timezone context)
       return isSameDay(zonedSlotDateTime, selectedDate!) && !slot.is_booked;
     }).sort((a, b) => {
-      // Sort by the time in the selected userTimezone
       const zonedTimeA = toZonedTime(new Date(a.datetime_utc), userTimezone).getTime();
       const zonedTimeB = toZonedTime(new Date(b.datetime_utc), userTimezone).getTime();
       return zonedTimeA - zonedTimeB;
     });
 
-    console.log(`Filtered Slots for ${selectedDate ? format(selectedDate, 'yyyy-MM-dd') : 'No Date'} (in ${userTimezone}):`, filtered);
+    // console.log(`Filtered Slots for ${selectedDate ? format(selectedDate, 'yyyy-MM-dd') : 'No Date'} (in ${userTimezone}):`, filtered);
     return filtered;
-  }, [currentSlots, selectedDate, userTimezone]); // Recalculate if slots, selected date, or timezone change
+  }, [currentSlots, selectedDate, userTimezone]);
 
   const handleOpenBookingDialog = (slot: Slot) => {
     setSelectedSlot(slot);
     setBookedByName('');
     setBookedByEmail('');
-    setDescription('');
+    // Set a default or informative description
+    setDescription('Brief description of the meeting purpose...');
     setIsBookingDialogOpen(true);
-    console.log("Selected Slot for Booking (UTC):", slot);
+    // console.log("Selected Slot for Booking (UTC):", slot);
   };
 
-  // Function to handle booking submission
   const handleBookSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSlot) return;
+
+    // Validate description is not empty if you want to make it mandatory
+    if (!description.trim()) {
+        toast.error('Please provide a description for your booking.');
+        return;
+    }
 
     setIsBookingLoading(true);
     try {
@@ -165,21 +150,18 @@ export default function Home() {
         description: description,
       };
 
-      // We send the original slot ID (which refers to the UTC slot) to the backend.
-      // The backend doesn't need to know the user's display timezone for booking.
       await bookSlot(selectedSlot.id, bookingDetails);
 
-      console.log("--- Before Optimistic Slot Update ---");
-      console.log("Prev currentSlots state:", currentSlots);
-      console.log("Slot being updated:", selectedSlot.id);
+      // console.log("--- Before Optimistic Slot Update ---");
+      // console.log("Prev currentSlots state:", currentSlots);
+      // console.log("Slot being updated:", selectedSlot.id);
 
-      // Optimistically update the UI: Mark the specific slot as booked in currentSlots state
       setCurrentSlots(prevSlots => {
         const updatedSlots = prevSlots.map(s =>
           s.id === selectedSlot.id ? { ...s, is_booked: true } : s
         );
-        console.log("New currentSlots state after optimistic update:", updatedSlots);
-        console.log("---------------------------------------");
+        // console.log("New currentSlots state after optimistic update:", updatedSlots);
+        // console.log("---------------------------------------");
         return updatedSlots;
       });
 
@@ -189,16 +171,35 @@ export default function Home() {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       toast.error(`Booking failed: ${errorMessage}`);
-      console.error("Booking error:", err);
+      // console.error("Booking error:", err);
     } finally {
       setIsBookingLoading(false);
     }
   };
 
+  // Framer Motion variants for fade-in animation
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: {
+      opacity: 1,
+      transition: {
+        duration: 0.5,
+        delay: 0.3,
+        ease: "easeOut"
+      }
+    }
+  };
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-start p-8 md:p-12 bg-gray-50">
-      <h1 className="text-4xl font-bold text-center mb-10 text-gray-800">
-        Book an Interview Slot
+    <motion.main
+      // Changed background to a slightly off-white for better contrast with a potential new theme
+      className="flex min-h-screen flex-col items-center justify-start p-8 md:p-12 bg-gray-100 text-gray-900"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
+      <h1 className="text-4xl font-bold text-center mb-10 text-primary"> {/* Used text-primary for title */}
+        Book a meeting with Rohit Koonireddy (RK)
       </h1>
 
       {error && (
@@ -244,7 +245,7 @@ export default function Home() {
               <CardDescription>Click a date to see available times.</CardDescription>
               {/* Timezone Selection Dropdown */}
               <div className="mt-4">
-                <Label htmlFor="timezone-select" className="mb-2 block text-sm font-medium text-gray-700">Your Current Timezone</Label>
+                <Label htmlFor="timezone-select" className="mb-2 block text-sm font-medium text-foreground">Your Current Timezone</Label> {/* Use text-foreground */}
                 <Select value={userTimezone} onValueChange={setUserTimezone}>
                   <SelectTrigger id="timezone-select" className="w-full">
                     <SelectValue placeholder="Select your timezone" />
@@ -267,7 +268,6 @@ export default function Home() {
                 onSelect={setSelectedDate}
                 initialFocus
                 className="rounded-md border mx-auto"
-                // Disable dates that have no available slots in the selected timezone
                 disabled={(date) =>
                   !datesWithAvailableSlots.includes(format(date, 'yyyy-MM-dd'))
                 }
@@ -275,44 +275,60 @@ export default function Home() {
                   day_selected: "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
                   day: "w-9 h-9",
                 }}
-                // Removed dayClassName prop as it's not supported by Calendar/DayPicker
               />
             </CardContent>
           </Card>
 
           <Card className="p-4 flex-1">
-            <CardHeader className="p-0 pb-4">
-              <CardTitle className="text-lg">
-                {selectedDate && userTimezone
-                  // Display the selected date formatted in the chosen timezone
-                  ? `Available Times on ${formatInTimeZone(selectedDate, userTimezone, 'MMM do, yyyy')}`
-                  : 'Select a Date to See Times'}
-              </CardTitle>
-              <CardDescription>
-                {selectedDate && filteredSlots.length === 0 && (
-                  <p>No available slots for this date in {userTimezone}.</p>
-                )}
-              </CardDescription>
+            <CardHeader className="p-0 pb-4 flex flex-row items-center justify-between">
+              <div className="flex-1">
+                <CardTitle className="text-lg">
+                  {selectedDate && userTimezone
+                    ? `Available Times on ${formatInTimeZone(selectedDate, userTimezone, 'MMM do, yyyy (EEEE)')}` // Changed date format for better readability
+                    : 'Select a Date to See Times'}
+                </CardTitle>
+                <CardDescription>
+                  {selectedDate && filteredSlots.length === 0 ? (
+                    <p>No available slots for this date in <span className="font-semibold text-primary">{userTimezone}</span>.</p> // Highlight timezone
+                  ) : (
+                    !selectedDate && <p className="text-center text-muted-foreground">Please select a date from the calendar.</p> // Use muted-foreground
+                  )}
+                </CardDescription>
+              </div>
+              {/* User Photo Placeholder */}
+              <div className="ml-4">
+                <Image
+                  src="/Rohit.jpg" // Assuming 'Rohit.jpg' is in your public directory
+                  alt="User Profile"
+                  width={60} // Slightly larger for better visibility
+                  height={60}
+                  className="rounded-full border-2 border-primary shadow-md" // Added border and shadow
+                />
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               {filteredSlots.length > 0 ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {filteredSlots.map((slot) => (
-                    <Button
+                    <motion.div
                       key={slot.id}
-                      onClick={() => handleOpenBookingDialog(slot)}
-                      disabled={slot.is_booked || isBookingLoading}
-                      className="flex flex-col h-auto py-2 px-3 text-base"
+                      whileHover={{ scale: 1.05, backgroundColor: 'var(--primary)' }} // Smooth transition to primary on hover
+                      transition={{ duration: 0.2 }}
+                      className="w-full"
                     >
-                      {/* Display the slot time converted to the selected timezone */}
-                      <span className="font-semibold">
-                        {formatInTimeZone(new Date(slot.datetime_utc), userTimezone, 'HH:mm')}
-                      </span>
-                      {/* Display a simplified timezone abbreviation */}
-                      <span className="text-xs opacity-80 mt-1">
-                        {formatInTimeZone(new Date(slot.datetime_utc), userTimezone, 'z')}
-                      </span>
-                    </Button>
+                      <Button
+                        onClick={() => handleOpenBookingDialog(slot)}
+                        disabled={slot.is_booked || isBookingLoading}
+                        className="flex flex-col h-auto py-2 px-3 text-base bg-secondary text-secondary-foreground hover:bg-secondary/80 w-full" // Using secondary for time slots
+                      >
+                        <span className="font-semibold">
+                          {formatInTimeZone(new Date(slot.datetime_utc), userTimezone, 'HH:mm')}
+                        </span>
+                        <span className="text-xs opacity-80 mt-1">
+                          {formatInTimeZone(new Date(slot.datetime_utc), userTimezone, 'z')}
+                        </span>
+                      </Button>
+                    </motion.div>
                   ))}
                 </div>
               ) : (
@@ -332,8 +348,7 @@ export default function Home() {
               <DialogTitle>Book Slot</DialogTitle>
               <DialogDescription>
                 Confirm your details to book the slot on{' '}
-                {/* Display the selected slot time in the user's chosen timezone */}
-                {formatInTimeZone(new Date(selectedSlot.datetime_utc), userTimezone, "EEEE, MMM do, yyyy 'at' HH:mm zzz")}.
+                  {formatInTimeZone(new Date(selectedSlot.datetime_utc), userTimezone, "EEEE, MMM do, yyyy 'at' HH:mm zzz")}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleBookSubmit} className="grid gap-4 py-4">
@@ -366,6 +381,8 @@ export default function Home() {
                   onChange={(e) => setDescription(e.target.value)}
                   className="col-span-3"
                   rows={3}
+                  placeholder="e.g., Interview for Software Engineer role, Q&A about project X, etc." // Added placeholder
+                  required // Made description required
                 />
               </div>
               <DialogFooter>
@@ -378,6 +395,6 @@ export default function Home() {
         </Dialog>
       )}
       <Toaster />
-    </main>
+    </motion.main>
   );
 }
