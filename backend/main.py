@@ -30,7 +30,7 @@ SLOT_DURATION_HOURS = int(os.getenv("SLOT_DURATION_HOURS", "1"))
 # Assuming your local timezone is CEST (UTC+2) for these hours
 LOCAL_BUSINESS_START_HOUR = 9  # 9 AM local time (e.g., 9:00 AM CEST)
 LOCAL_BUSINESS_END_HOUR = 17   # 5 PM local time (e.g., 5:00 PM CEST)
-DAYS_TO_LOOK_AHEAD = 7         # Look for slots over the next 7 days
+DAYS_TO_LOOK_AHEAD = 15         # Look for slots over the next 7 days
 
 # Convert local business hours to their UTC equivalents for internal logic
 # (e.g., 9:00 AM CEST is 7:00 AM UTC; 5:00 PM CEST is 3:00 PM UTC)
@@ -174,7 +174,7 @@ async def get_slots(
     service = google_calendar_api.build_calendar_service(creds)
 
     # Determine the date range for the query
-    query_date = target_date if target_date else date.today()
+    query_date = (target_date + timedelta(days=1)) if target_date else (date.today() + timedelta(days=1))
     
     # --- Generate all potential slots based on your defined business rules ---
     potential_bookable_slots_utc: List[datetime] = []
