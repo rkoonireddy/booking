@@ -98,7 +98,21 @@ async def startup_event():
     try:
         # Check for Google Calendar credentials
         creds = google_calendar_api.get_credentials()
-        print("Google Calendar credentials loaded and valid.")
+        # Now, use our custom flag for conditional logic
+        if not creds :
+            print("Google Calendar credentials not found or invalid. Please authorize the app:")
+            flow = google_calendar_api.get_flow()
+            authorization_url, _ = flow.authorization_url(
+                access_type="offline", include_granted_scopes="true"
+            )
+            print(f"Visit: {authorization_url}")
+        
+        # We don't need a separate `elif creds and creds.expired and creds.refresh_token:`
+        # because `get_credentials()` already handles the refresh if it was triggered
+        # by an actual expiration. If `get_credentials()` returned a valid token
+        # (meaning `is_creds_valid_custom` is True), then it's already refreshed if needed.
+        else: # This means is_creds_valid_custom is True
+            print("Google Calendar credentials loaded and valid.")
     finally:
         db.close()
 
