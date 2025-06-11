@@ -169,7 +169,7 @@ async def get_slots(
     based on business hours and checking real-time availability with Google Calendar.
     """
     creds = google_calendar_api.get_credentials()
-    if not creds or not creds.valid:
+    if not creds:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Google Calendar not authorized. Please authorize the app first.",
@@ -272,7 +272,7 @@ async def book_slot(
     """
     # 1. Get Google Calendar Credentials
     creds = google_calendar_api.get_credentials()
-    if not creds or not creds.valid:
+    if not creds:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Google Calendar not authorized. Please authorize the app first.",
