@@ -98,36 +98,7 @@ async def startup_event():
     try:
         # Check for Google Calendar credentials
         creds = google_calendar_api.get_credentials()
-
-        # --- Start Custom Validity and Expiry Check ---
-        # This replaces the problematic `creds.valid` and `creds.expired` properties.
-        # We assume get_credentials has already ensured creds.expiry is timezone-aware if it exists.
-        
-        is_creds_valid_custom = False
-        if creds and creds.token: # Ensure creds object and an access token string exist
-            if creds.expiry is None: # If expiry is unexpectedly None, it's not valid
-                is_creds_valid_custom = False
-            else:
-                current_utc_time = datetime.now(timezone.utc)
-                if creds.expiry > current_utc_time: # Check if expiry is in the future
-                    is_creds_valid_custom = True
-                # else: is_creds_valid_custom remains False (expired)
-        
-        # Now, use our custom flag for conditional logic
-        if not is_creds_valid_custom:
-            print("Google Calendar credentials not found or invalid. Please authorize the app:")
-            flow = google_calendar_api.get_flow()
-            authorization_url, _ = flow.authorization_url(
-                access_type="offline", include_granted_scopes="true"
-            )
-            print(f"Visit: {authorization_url}")
-        
-        # We don't need a separate `elif creds and creds.expired and creds.refresh_token:`
-        # because `get_credentials()` already handles the refresh if it was triggered
-        # by an actual expiration. If `get_credentials()` returned a valid token
-        # (meaning `is_creds_valid_custom` is True), then it's already refreshed if needed.
-        else: # This means is_creds_valid_custom is True
-            print("Google Calendar credentials loaded and valid.")
+        print("Google Calendar credentials loaded and valid.")
     finally:
         db.close()
 
@@ -175,15 +146,15 @@ async def get_slots(
             detail="Google Calendar not authorized. Please authorize the app first.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(GoogleAuthRequest())
-            google_calendar_api.save_credentials(creds)
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Failed to refresh Google Calendar token: {e}. Please re-authorize.",
-            )
+    # if creds.expired and creds.refresh_token:
+    #     try:
+    #         creds.refresh(GoogleAuthRequest())
+    #         google_calendar_api.save_credentials(creds)
+    #     except Exception as e:
+    #         raise HTTPException(
+    #             status_code=status.HTTP_401_UNAUTHORIZED,
+    #             detail=f"Failed to refresh Google Calendar token: {e}. Please re-authorize.",
+    #         )
 
     service = google_calendar_api.build_calendar_service(creds)
 
@@ -278,15 +249,15 @@ async def book_slot(
             detail="Google Calendar not authorized. Please authorize the app first.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(GoogleAuthRequest())
-            google_calendar_api.save_credentials(creds)
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Failed to refresh Google Calendar token: {e}. Please re-authorize.",
-            )
+    # if creds.expired and creds.refresh_token:
+    #     try:
+    #         creds.refresh(GoogleAuthRequest())
+    #         google_calendar_api.save_credentials(creds)
+    #     except Exception as e:
+    #         raise HTTPException(
+    #             status_code=status.HTTP_401_UNAUTHORIZED,
+    #             detail=f"Failed to refresh Google Calendar token: {e}. Please re-authorize.",
+    #         )
 
     service = google_calendar_api.build_calendar_service(creds)
 

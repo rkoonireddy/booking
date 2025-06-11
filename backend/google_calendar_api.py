@@ -104,7 +104,7 @@ def get_credentials():
         print(f"DEBUG: Loading credentials from {TOKEN_FILE}.")
         try:
             creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-            
+            og_creds_expiry = creds.expiry  # Original expiry for debugging
             # --- START Critical Timezone Handling ---
             if creds.expiry and creds.expiry.tzinfo is None:
                 creds.expiry = creds.expiry.replace(tzinfo=timezone.utc)
@@ -119,6 +119,7 @@ def get_credentials():
             print(f"DEBUG: Current UTC time for comparison: {current_utc_time} (Type: {type(current_utc_time)}, Tzinfo: {current_utc_time.tzinfo})")
             print(f"DEBUG: Custom `is_expired` check result: {is_expired}")
 
+            creds.expiry = og_creds_expiry
             # Check if token is expired and refresh if a refresh_token is available
             if is_expired and creds.refresh_token:
                 print(f"DEBUG: Credentials from {TOKEN_FILE} expired, attempting refresh...")
@@ -161,35 +162,8 @@ def get_credentials():
 
 def build_calendar_service(creds):
     """Builds and returns a Google Calendar API service object."""
-    if not creds:
-        print("Cannot build calendar service: No valid credentials provided.")
-        return None
     try:
-        service = build("calendar", "v3", credentials=creds)
-        
-        # --- MODIFIED CONNECTIVITY TEST ---
-        try:
-            # Test with a call that uses the desired SCOPES: calendar.events or calendar.freebusy
-            # A simple events.list() call for the primary calendar within a small time window
-            # is a good way to test read access to events.
-            now = datetime.utcnow() # Use UTC for Google API if you don't convert from naive
-            service.events().list(
-                calendarId=CALENDAR_ID,
-                timeMin=now.isoformat() + 'Z', # Use 'Z' for UTC if datetime is naive
-                maxResults=1, # Just need to check if it works, no need for many results
-                singleEvents=True,
-                orderBy='startTime'
-            ).execute()
-            print("DEBUG: Successfully verified Google Calendar API connectivity (events.list test).")
-        except HttpError as err:
-            # If the error is still 403 here, then your SCOPES are genuinely too limited
-            # for even this operation, or the user didn't grant all requested scopes.
-            print(f"WARNING: Google Calendar API connectivity test failed: {err}")
-            # Consider if the application can proceed without this specific access.
-            # If crucial functionalities rely on it, you might want to raise an exception or return None.
-            # For now, we'll return the service even with this warning.
-        
-        return service
+        return build("calendar", "v3", credentials=creds)
     except Exception as e:
         print(f"Error building calendar service: {e}")
         return None
@@ -201,9 +175,6 @@ async def get_free_busy_slots(service, start_time: datetime, end_time: datetime,
     Returns a list of free 1-hour slots.
     """
     try:
-        # Note: timezone conversion is removed here as requested.
-        # Ensure that start_time and end_time passed to this function
-        # are already in a consistent timezone, preferably UTC, to avoid issues.
         body = {
             "timeMin": start_time.isoformat(),
             "timeMax": end_time.isoformat(),
@@ -217,14 +188,8 @@ async def get_free_busy_slots(service, start_time: datetime, end_time: datetime,
         while current_time < end_time:
             is_busy = False
             for period in busy_periods:
-                # `datetime.fromisoformat` will create timezone-aware datetimes if the
-                # ISO string (e.g., "2025-06-11T14:00:00Z") contains timezone info.
-                # If it doesn't, it will be naive. Mixed comparisons can cause TypeError.
-                busy_start = datetime.fromisoformat(period['start'])
-                busy_end = datetime.fromisoformat(period['end'])
-                
-                # Critical point: If current_time is naive and busy_start/end are aware (from 'Z'),
-                # or vice-versa, this comparison will raise TypeError.
+                busy_start = datetime.fromisoformat(period['start']).astimezone(timezone.utc)
+                busy_end = datetime.fromisoformat(period['end']).astimezone(timezone.utc)
                 if busy_start <= current_time < busy_end:
                     is_busy = True
                     break
@@ -236,6 +201,7 @@ async def get_free_busy_slots(service, start_time: datetime, end_time: datetime,
                 })
 
             current_time += timedelta(hours=1)
+        # print(free_slots)
         return free_slots
 
     except HttpError as error:
@@ -258,7 +224,7 @@ async def create_calendar_event(service, start_time: datetime, end_time: datetim
         'description': description,
         'start': {
             'dateTime': start_time.isoformat(),
-            'timeZone': 'UTC', # This string tells Google how to interpret the naive datetime.
+            'timeZone': 'UTC',
         },
         'end': {
             'dateTime': end_time.isoformat(),
@@ -297,3 +263,4 @@ async def create_calendar_event(service, start_time: datetime, end_time: datetim
     except Exception as e:
         print(f"An unexpected error occurred in create_calendar_event: {e}")
         raise
+
